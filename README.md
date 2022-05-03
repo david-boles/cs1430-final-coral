@@ -1,4 +1,4 @@
-# cs1470-final-runescape
+# cs1430-final-coral
 
 # Git LFS setup:
 1. Install git either following the [website](https://git-lfs.github.com/) or, on a Debian-based distro, `sudo apt install git-lfs`.
