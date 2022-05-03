@@ -113,24 +113,24 @@ def Segmenter():
 
     down_stack = [
         downsample(
-            64, 4, apply_batchnorm=False
+            64 / 16, 4, apply_batchnorm=False
         ),  # (batch_size, INPUT_DIM/2, INPUT_DIM/2, 64)
-        downsample(128, 4),  # (batch_size, INPUT_DIM/4, INPUT_DIM/4, 128)
-        downsample(256, 4),  # (batch_size, INPUT_DIM/8, INPUT_DIM/8, 256)
-        downsample(512, 4),  # (batch_size, INPUT_DIM/16, INPUT_DIM/16, 512)
-        downsample(512, 4),  # (batch_size, INPUT_DIM/32, INPUT_DIM/32, 512)
-        downsample(512, 4),  # (batch_size, INPUT_DIM/64, INPUT_DIM/64, 512)
-        downsample(512, 4),  # (batch_size, INPUT_DIM/128, INPUT_DIM/128, 512)
+        downsample(128 / 16, 4),  # (batch_size, INPUT_DIM/4, INPUT_DIM/4, 128)
+        downsample(256 / 16, 4),  # (batch_size, INPUT_DIM/8, INPUT_DIM/8, 256)
+        downsample(512 / 16, 4),  # (batch_size, INPUT_DIM/16, INPUT_DIM/16, 512)
+        downsample(512 / 16, 4),  # (batch_size, INPUT_DIM/32, INPUT_DIM/32, 512)
+        downsample(512 / 16, 4),  # (batch_size, INPUT_DIM/64, INPUT_DIM/64, 512)
+        downsample(512 / 16, 4),  # (batch_size, INPUT_DIM/128, INPUT_DIM/128, 512)
         # downsample(512, 4),  # (batch_size, INPUT_DIM/256, INPUT_DIM/256, 512)
     ]
 
     up_stack = [
-        upsample(512, 4, apply_dropout=True),  # (batch_size, 2, 2, 1024)
-        upsample(512, 4, apply_dropout=True),  # (batch_size, 4, 4, 1024)
-        upsample(512, 4, apply_dropout=True),  # (batch_size, 8, 8, 1024)
-        upsample(512, 4),  # (batch_size, 16, 16, 1024)
-        upsample(256, 4),  # (batch_size, 32, 32, 512)
-        upsample(128, 4),  # (batch_size, 64, 64, 256)
+        upsample(512 / 16, 4, apply_dropout=True),  # (batch_size, 2, 2, 1024)
+        upsample(512 / 16, 4, apply_dropout=True),  # (batch_size, 4, 4, 1024)
+        upsample(512 / 16, 4, apply_dropout=True),  # (batch_size, 8, 8, 1024)
+        upsample(512 / 16, 4),  # (batch_size, 16, 16, 1024)
+        upsample(256 / 16, 4),  # (batch_size, 32, 32, 512)
+        upsample(128 / 16, 4),  # (batch_size, 64, 64, 256)
         # upsample(64, 4),  # (batch_size, 128, 128, 128)
     ]
 
@@ -232,7 +232,7 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             plt.imshow(image)
             plt.axis("off")
         plt.draw()
-        plt.pause(1)
+        plt.pause(0.01)
         pass  # TODO
 
 
@@ -245,7 +245,7 @@ model.fit(
     # test_input[:10],  # TODO
     # test_output[:10],
     batch_size=100,  # TODO
-    epochs=1,
+    epochs=1000,
     validation_data=(test_input, test_output),
     callbacks=[DisplayCallback(model, test_input, test_output)],
 )
