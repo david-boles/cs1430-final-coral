@@ -12,6 +12,9 @@ DATA_SECTIONS = 3
 INPUT_DIM = 128
 # Shift in pixels (1 dimension) from one input region to the next
 TRAIN_EXAMPLE_STRIDE = ceil(INPUT_DIM / 5)
+# Reduce the complexity of the model by increasing this number.
+# Power of 2 between 1 and 16 inclusive.
+COMPLEXITY_FACTOR = 16
 
 
 def load_dataset():
@@ -60,6 +63,7 @@ def load_dataset():
     return (np.stack(x) for x in (train_input, train_output, test_input, test_output))
 
 
+# Model block for the encoder.
 def downsample(filters, size, apply_batchnorm=True):
     initializer = tf.random_normal_initializer(0.0, 0.02)
 
@@ -83,6 +87,7 @@ def downsample(filters, size, apply_batchnorm=True):
     return result
 
 
+# Model block for the decoder.
 def upsample(filters, size, apply_dropout=False):
     initializer = tf.random_normal_initializer(0.0, 0.02)
 
@@ -108,30 +113,28 @@ def upsample(filters, size, apply_dropout=False):
     return result
 
 
+# Construct and compile the model.
 def Segmenter():
     inputs = tf.keras.layers.Input(shape=[INPUT_DIM, INPUT_DIM, 3])
 
     down_stack = [
-        downsample(
-            64 / 8, 4, apply_batchnorm=False
-        ),  # (batch_size, INPUT_DIM/2, INPUT_DIM/2, 64)
-        downsample(128 / 8, 4),  # (batch_size, INPUT_DIM/4, INPUT_DIM/4, 128)
-        downsample(256 / 8, 4),  # (batch_size, INPUT_DIM/8, INPUT_DIM/8, 256)
-        downsample(512 / 8, 4),  # (batch_size, INPUT_DIM/16, INPUT_DIM/16, 512)
-        downsample(512 / 8, 4),  # (batch_size, INPUT_DIM/32, INPUT_DIM/32, 512)
-        downsample(512 / 8, 4),  # (batch_size, INPUT_DIM/64, INPUT_DIM/64, 512)
-        downsample(512 / 8, 4),  # (batch_size, INPUT_DIM/128, INPUT_DIM/128, 512)
-        # downsample(512, 4),  # (batch_size, INPUT_DIM/256, INPUT_DIM/256, 512)
+        downsample(64 / COMPLEXITY_FACTOR, 4, apply_batchnorm=False),
+        downsample(128 / COMPLEXITY_FACTOR, 4),
+        downsample(256 / COMPLEXITY_FACTOR, 4),
+        downsample(512 / COMPLEXITY_FACTOR, 4),
+        downsample(512 / COMPLEXITY_FACTOR, 4),
+        downsample(512 / COMPLEXITY_FACTOR, 4),
+        downsample(512 / COMPLEXITY_FACTOR, 4),
+        # (batch_size, 1, 1, 512 / COMPLEXITY_FACTOR)
     ]
 
     up_stack = [
-        upsample(512 / 8, 4, apply_dropout=True),  # (batch_size, 2, 2, 1024)
-        upsample(512 / 8, 4, apply_dropout=True),  # (batch_size, 4, 4, 1024)
-        upsample(512 / 8, 4, apply_dropout=True),  # (batch_size, 8, 8, 1024)
-        upsample(512 / 8, 4),  # (batch_size, 16, 16, 1024)
-        upsample(256 / 8, 4),  # (batch_size, 32, 32, 512)
-        upsample(128 / 8, 4),  # (batch_size, 64, 64, 256)
-        # upsample(64, 4),  # (batch_size, 128, 128, 128)
+        upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
+        upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
+        upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
+        upsample(512 / COMPLEXITY_FACTOR, 4),
+        upsample(256 / COMPLEXITY_FACTOR, 4),
+        upsample(128 / COMPLEXITY_FACTOR, 4),
     ]
 
     initializer = tf.random_normal_initializer(0.0, 0.02)
@@ -142,7 +145,8 @@ def Segmenter():
         padding="same",
         kernel_initializer=initializer,
         activation="tanh",
-    )  # (batch_size, ?, ?, 1)
+    )
+    # (batch_size, 128, 128, 1)
 
     x = inputs
 
@@ -171,60 +175,42 @@ def Segmenter():
     return model
 
 
-# # TODO
-# def display(display_list):
-#     plt.close()
-#     plt.figure(figsize=(15, 15))
-
-#     title = ["Input Image", "True Mask", "Predicted Mask"]
-
-#     for i in range(len(display_list)):
-#         plt.subplot(1, len(display_list), i + 1)
-#         plt.title(title[i])
-#         plt.imshow(display_list[i])
-#         plt.axis("off")
-#     plt.show()
-#     pass
-
-
-# def show_predictions_builder(model, inputs, outputs):
-#     def callback():
-#         idx = randint(len(inputs))
-#         pred_mask = model.predict(inputs[idx])
-#         display([inputs[idx], outputs[idx], pred_mask])
-
-#     return callback
-
-
+# Display a the output for a random test image every batch
+# and plot the accuracy every epoch.
 class DisplayCallback(tf.keras.callbacks.Callback):
     def __init__(self, model, input, output, **args):
         super().__init__(**args)
 
-        self.figure = plt.figure(figsize=(15, 15))
-        plt.show(block=False)
         self.model = model
         self.input = input
         self.output = output
 
-    # def on_epoch_end(self, epoch, logs=None):
-    #     # clear_output(wait=True)
-    #     idx = randrange(len(test_input))
-    #     pred_mask = model.predict(test_input[[idx]])
-    #     display([test_input[idx], test_output[idx], pred_mask[0]])
-    #     # print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
+        self.train_accuracy = []
+        self.val_accuracy = []
+
+        self.img_figure = plt.figure()
+        self.acc_figure = plt.figure()
+        plt.show(block=False)
+
+    def on_epoch_end(self, epoch, logs=None):
+        self.train_accuracy.append(logs["accuracy"])
+        self.val_accuracy.append(logs["val_accuracy"])
+
+        plt.figure(self.acc_figure.number)
+        plt.clf()
+        plt.plot(self.train_accuracy)
+        plt.plot(self.val_accuracy)
+        plt.title("Accuracies by Epoch")
+        plt.legend(["Train", "Validation"])
 
     def on_batch_end(self, batch, logs=None):
-        # idx = randrange(len(test_input))
-        # pred_mask = model.predict(test_input[[idx]])
-        # display([test_input[idx], test_output[idx], pred_mask[0]])
-
         idx = randrange(len(self.input))
         pred_mask = model.predict(self.input[[idx]])[0]
 
         titles = ["Input Image", "True Mask", "Predicted Mask"]
         images = [self.input[idx], self.output[idx], pred_mask]
 
-        plt.figure(self.figure.number)
+        plt.figure(self.img_figure.number)
         plt.clf()
         for i, title, image in zip(range(3), titles, images):
             plt.subplot(1, 3, i + 1)
@@ -233,18 +219,18 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             plt.axis("off")
         plt.draw()
         plt.pause(0.01)
-        pass  # TODO
 
 
 train_input, train_output, test_input, test_output = load_dataset()
 model = Segmenter()
 
+# Optional: Plot the model's structure
+# tf.keras.utils.plot_model(model, show_shapes=True)
+
 model.fit(
     train_input,
     train_output,
-    # test_input[:10],  # TODO
-    # test_output[:10],
-    batch_size=100,  # TODO
+    batch_size=100,
     epochs=1000,
     validation_data=(test_input, test_output),
     callbacks=[DisplayCallback(model, test_input, test_output)],
