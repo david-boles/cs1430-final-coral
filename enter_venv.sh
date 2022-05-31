@@ -42,7 +42,7 @@ fi
 
 
 # Activate venv
-source env/bin/activate
+source env/Scripts/activate
 
 
 
