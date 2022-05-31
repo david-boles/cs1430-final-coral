@@ -268,10 +268,20 @@ class DisplayCallback(tf.keras.callbacks.Callback):
         plt.draw()
         plt.pause(0.01)
 
+def print_progress(prev, inc, of):
+    MAX_NUM_PRINTS = 10
+    old_perc = 100*prev/of
+    new_perc = 100*(prev+inc)/of
+    if round(new_perc / MAX_NUM_PRINTS) != round(old_perc / MAX_NUM_PRINTS):
+        print(f"{new_perc:.0f}%")
 
 def segment_full_image():
     SOURCE_IMAGE = "full_reef"
-    # SOURCE_IMAGE = "temp-test"
+    SOURCE_IMAGE_EXTENSION = "tiff" 
+    # SOURCE_IMAGE = "section-1-input"
+    # SOURCE_IMAGE_EXTENSION = "png"
+
+    BATCH_SIZE = 100 # Limits RAM usage
 
     print("Loading model weights...")
     model = Segmenter()
@@ -279,7 +289,11 @@ def segment_full_image():
 
     print("Reading input image...")
     PIL.Image.MAX_IMAGE_PIXELS = None
-    full_reef = img_as_float32(io.imread(f"./data/{SOURCE_IMAGE}.png"))
+    raw = io.imread(f"./data/{SOURCE_IMAGE}.{SOURCE_IMAGE_EXTENSION}")
+
+    print("Converting to float32...")
+    full_reef = img_as_float32(raw)
+    del raw
 
     print("Cropping input image...")
     num_rows = floor(full_reef.shape[0] / INPUT_DIM)
@@ -295,9 +309,16 @@ def segment_full_image():
             for patch in np.split(row, num_columns, 1)
         ]
     )
+    del cropped
 
     print("Computing segmentations...")
-    output = model(patches[:, :, :, :3]).numpy()
+    output = np.zeros((*patches.shape[:-1], 1))
+    completed_patches = 0
+    for patch_batch in np.array_split(patches, patches.shape[0]/BATCH_SIZE, axis=0):
+        patch_batch_size = patch_batch.shape[0]
+        output[completed_patches:completed_patches+patch_batch_size] = model(patch_batch[:,:,:,:3]).numpy()
+        print_progress(completed_patches, patch_batch_size, patches.shape[0])
+        completed_patches += patch_batch_size
 
     print("Masking non fully opaque patches...")
     for i, has_clear in enumerate(np.any(patches[:, :, :, 3] == 0, axis=(1, 2))):
@@ -305,7 +326,7 @@ def segment_full_image():
             output[i, :, :, :] = 0
     del patches
 
-    print("Concatenating into full segmentations...")
+    print("Concatenating patches...")
     result = np.concatenate(
         [
             np.concatenate(output[i * num_columns : (i + 1) * num_columns], axis=1)
@@ -315,16 +336,12 @@ def segment_full_image():
     )
     del output
 
-    print("Saving cropped input image...")
     if not os.path.exists("./full_segmentations"):
         os.makedirs("./full_segmentations")
-    io.imsave(
-        f"./full_segmentations/cropped_input-{SOURCE_IMAGE}-{MODEL_NAME}.bmp", cropped
-    )
 
-    print("Saving segmented result...")
+    print("Saving result...")
     io.imsave(
-        f"./full_segmentations/segmentation-{SOURCE_IMAGE}-{MODEL_NAME}.bmp", result
+        f"./full_segmentations/{SOURCE_IMAGE}--{MODEL_NAME}.png", result
     )
 
     print("Done!")
