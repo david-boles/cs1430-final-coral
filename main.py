@@ -1,4 +1,5 @@
-from math import ceil
+from math import ceil, floor
+import os
 from random import randint, randrange
 from subprocess import call
 import matplotlib.pyplot as plt
@@ -6,18 +7,21 @@ import numpy as np
 import tensorflow as tf
 from skimage import img_as_float32, io
 from keras.callbacks import CSVLogger
+import PIL
 
 # Number of distinct regions we have data for.
 DATA_SECTIONS = 4
 # Input shape will be (batch_sz, INPUT_DIM, INPUT_DIM, 3)
-INPUT_DIM = 64
+# DON'T FORGET TO UPDATE THE MODEL IF YOU CHANGE THIS
+INPUT_DIM = 128
 # Shift in pixels (1 dimension) from one input region to the next
 TRAIN_EXAMPLE_STRIDE = ceil(INPUT_DIM / 1) # changed to 1
 # Reduce the complexity of the model by increasing this number.
 # Power of 2 between 1 and 16 inclusive.
 COMPLEXITY_FACTOR = 16
 
-MODEL_NAME = 'comp16_sz64_coralonly'
+MODEL_NAME = f"comp{COMPLEXITY_FACTOR}_sz{INPUT_DIM}_coralonly"
+
 
 def load_dataset():
     train_input = []
@@ -128,7 +132,7 @@ def Segmenter():
         downsample(512 / COMPLEXITY_FACTOR, 4),
         downsample(512 / COMPLEXITY_FACTOR, 4),
         downsample(512 / COMPLEXITY_FACTOR, 4),
-        # downsample(512 / COMPLEXITY_FACTOR, 4),
+        downsample(512 / COMPLEXITY_FACTOR, 4),  # Comment out for size 64
         # (batch_size, 1, 1, 512 / COMPLEXITY_FACTOR)
     ]
 
@@ -136,7 +140,7 @@ def Segmenter():
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
-        # upsample(512 / COMPLEXITY_FACTOR, 4),
+        upsample(512 / COMPLEXITY_FACTOR, 4),  # Comment out for size 64
         upsample(256 / COMPLEXITY_FACTOR, 4),
         upsample(128 / COMPLEXITY_FACTOR, 4),
     ]
@@ -250,11 +254,76 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             plt.title(title)
             plt.imshow(image)
             plt.axis("off")
-            
+
         plt.savefig('plots/train_img_batch'+str(batch)+'.png')
         plt.draw()
         plt.pause(0.01)
-            
+
+
+def segment_full_image():
+    SOURCE_IMAGE = "full_reef"
+    # SOURCE_IMAGE = "temp-test"
+
+    print("Loading model weights...")
+    model = Segmenter()
+    model.load_weights(MODEL_NAME + ".h5")
+
+    print("Reading input image...")
+    PIL.Image.MAX_IMAGE_PIXELS = None
+    full_reef = img_as_float32(io.imread(f"./data/{SOURCE_IMAGE}.png"))
+
+    print("Cropping input image...")
+    num_rows = floor(full_reef.shape[0] / INPUT_DIM)
+    num_columns = floor(full_reef.shape[1] / INPUT_DIM)
+    cropped = full_reef[: INPUT_DIM * num_rows, : INPUT_DIM * num_columns, :]
+    del full_reef
+
+    print("Splitting into patches...")
+    patches = np.array(
+        [
+            patch
+            for row in np.split(cropped, num_rows, 0)
+            for patch in np.split(row, num_columns, 1)
+        ]
+    )
+
+    print("Computing segmentations...")
+    output = model(patches[:, :, :, :3]).numpy()
+
+    print("Masking non fully opaque patches...")
+    for i, has_clear in enumerate(np.any(patches[:, :, :, 3] == 0, axis=(1, 2))):
+        if has_clear:
+            output[i, :, :, :] = 0
+    del patches
+
+    print("Concatenating into full segmentations...")
+    result = np.concatenate(
+        [
+            np.concatenate(output[i * num_columns : (i + 1) * num_columns], axis=1)
+            for i in range(num_rows)
+        ],
+        axis=0,
+    )
+    del output
+
+    print("Saving cropped input image...")
+    if not os.path.exists("./full_segmentations"):
+        os.makedirs("./full_segmentations")
+    io.imsave(
+        f"./full_segmentations/cropped_input-{SOURCE_IMAGE}-{MODEL_NAME}.bmp", cropped
+    )
+
+    print("Saving segmented result...")
+    io.imsave(
+        f"./full_segmentations/segmentation-{SOURCE_IMAGE}-{MODEL_NAME}.bmp", result
+    )
+
+    print("Done!")
+
+
+# Uncomment to segment the entire image (and do nothing else)
+# segment_full_image()
+# exit()
 
 # Load data
 train_input, train_output, test_input, test_output = load_dataset()
