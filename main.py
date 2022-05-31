@@ -5,17 +5,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from skimage import img_as_float32, io
+from keras.callbacks import CSVLogger
 
 # Number of distinct regions we have data for.
-DATA_SECTIONS = 3
+DATA_SECTIONS = 4
 # Input shape will be (batch_sz, INPUT_DIM, INPUT_DIM, 3)
-INPUT_DIM = 128
+INPUT_DIM = 64
 # Shift in pixels (1 dimension) from one input region to the next
-TRAIN_EXAMPLE_STRIDE = ceil(INPUT_DIM / 5)
+TRAIN_EXAMPLE_STRIDE = ceil(INPUT_DIM / 1) # changed to 1
 # Reduce the complexity of the model by increasing this number.
 # Power of 2 between 1 and 16 inclusive.
 COMPLEXITY_FACTOR = 16
 
+MODEL_NAME = 'comp16_sz64_coralonly'
 
 def load_dataset():
     train_input = []
@@ -23,10 +25,12 @@ def load_dataset():
     test_input = []
     test_output = []
     for sidx in range(DATA_SECTIONS):
+        print (sidx)
         # Load
-        section_input = img_as_float32(io.imread(f"./data/section-{sidx+1}-input.png"))
+        section_input = img_as_float32(
+            io.imread(f"./data/segmented-elisa-section_{sidx+1}-input.png"))
         section_output = img_as_float32(
-            io.imread(f"./data/section-{sidx+1}-output.png")
+            io.imread(f"./data/segmented-elisa-section_{sidx+1}-output.png")
         )
 
         # Shape
@@ -35,9 +39,9 @@ def load_dataset():
 
         # Input should be opaque, output should be opaque iff colored as coral
         assert (section_input[:, :, 3] == 1).all()
-        assert (
-            (section_output[:, :, 3] == 1) == (section_output[:, :, 2] == 0.8352942)
-        ).all()
+        # assert (
+        #     (section_output[:, :, 3] == 1) == (section_output[:, :, 2] == 0.8352942)
+        # ).all()
         assert ((section_output[:, :, 3] == 0) == (section_output[:, :, 2] == 0)).all()
 
         # Drop/keep only alpha channel
@@ -124,7 +128,7 @@ def Segmenter():
         downsample(512 / COMPLEXITY_FACTOR, 4),
         downsample(512 / COMPLEXITY_FACTOR, 4),
         downsample(512 / COMPLEXITY_FACTOR, 4),
-        downsample(512 / COMPLEXITY_FACTOR, 4),
+        # downsample(512 / COMPLEXITY_FACTOR, 4),
         # (batch_size, 1, 1, 512 / COMPLEXITY_FACTOR)
     ]
 
@@ -132,7 +136,7 @@ def Segmenter():
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
-        upsample(512 / COMPLEXITY_FACTOR, 4),
+        # upsample(512 / COMPLEXITY_FACTOR, 4),
         upsample(256 / COMPLEXITY_FACTOR, 4),
         upsample(128 / COMPLEXITY_FACTOR, 4),
     ]
@@ -144,7 +148,7 @@ def Segmenter():
         strides=2,
         padding="same",
         kernel_initializer=initializer,
-        activation="tanh",
+        activation="sigmoid",
     )
     # (batch_size, 128, 128, 1)
 
@@ -169,13 +173,41 @@ def Segmenter():
     model.compile(
         optimizer="adam",
         loss=tf.keras.losses.BinaryCrossentropy(),
-        metrics=["accuracy"],
+        metrics=['accuracy',
+                tf.keras.metrics.Precision(),
+                tf.keras.metrics.Recall()]
     )
 
     return model
 
+"""
+def calc_metrics(model, testX, testY):
 
-# Display a the output for a random test image every batch
+    print(type(model))
+    # predict crisp classes for test set
+    yhat_classes = model.predict(testX, verbose=0)
+    # reduce to 1d array
+    yhat_classes = yhat_classes[:, 0]
+
+    # accuracy: (tp + tn) / (p + n)
+    accuracy = accuracy_score(testY, yhat_classes)
+    print('Accuracy: %f' % accuracy)
+    # precision tp / (tp + fp)
+    precision = precision_score(testY, yhat_classes)
+    print('Precision: %f' % precision)
+    # recall: tp / (tp + fn)
+    recall = recall_score(testY, yhat_classes)
+    print('Recall: %f' % recall)
+    # f1: 2 tp / (2 tp + fp + fn)
+    f1 = f1_score(testY, yhat_classes)
+    print('F1 score: %f' % f1)
+
+    metrics = (accuracy, precision, recall, f1)
+
+    return metrics
+"""
+
+# Display the output for a random test image every batch
 # and plot the accuracy every epoch.
 class DisplayCallback(tf.keras.callbacks.Callback):
     def __init__(self, model, input, output, **args):
@@ -203,6 +235,7 @@ class DisplayCallback(tf.keras.callbacks.Callback):
         plt.title("Accuracies by Epoch")
         plt.legend(["Train", "Validation"])
 
+
     def on_batch_end(self, batch, logs=None):
         idx = randrange(len(self.input))
         pred_mask = model.predict(self.input[[idx]])[0]
@@ -217,21 +250,54 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             plt.title(title)
             plt.imshow(image)
             plt.axis("off")
+            
+        plt.savefig('plots/train_img_batch'+str(batch)+'.png')
         plt.draw()
         plt.pause(0.01)
+            
 
-
+# Load data
 train_input, train_output, test_input, test_output = load_dataset()
+print(train_input.shape)
+
+# Create file to save metrics
+csv_logger = CSVLogger(MODEL_NAME+'.csv', append=True, separator=';')
+
+# Define the model
 model = Segmenter()
+num_epochs = 15
 
-# Optional: Plot the model's structure
-# tf.keras.utils.plot_model(model, show_shapes=True)
-
-model.fit(
+# Train the model
+history = model.fit(
     train_input,
     train_output,
-    batch_size=100,
-    epochs=1000,
+    batch_size = 64,
+    epochs=15,
     validation_data=(test_input, test_output),
-    callbacks=[DisplayCallback(model, test_input, test_output)],
+    callbacks=[DisplayCallback(model, test_input, test_output), csv_logger]
 )
+
+# Plot the model's structure
+# tf.keras.utils.plot_model(model, show_shapes=True)
+
+# plot loss during training
+# plt.subplot(211)
+# plt.title('Loss')
+# plt.plot(history.history['loss'], label='train')
+# plt.plot(history.history['val_loss'], label='test')
+# plt.legend()
+# # plot accuracy during training
+# plt.subplot(212)
+# plt.title('Accuracy')
+# plt.plot(history.history['accuracy'], label='train')
+# plt.plot(history.history['val_accuracy'], label='test')
+# plt.legend()
+# plt.show()
+
+# serialize model to JSON
+model_json = model.to_json()
+with open(MODEL_NAME+".json", "w") as json_file:
+    json_file.write(model_json)
+# serialize weights to HDF5
+model.save_weights(MODEL_NAME + ".h5")
+print("Saved model to disk")
