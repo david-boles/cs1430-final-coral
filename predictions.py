@@ -6,7 +6,14 @@ import numpy as np
 import pandas as pd
 
 
-metrics = pd.read_csv('comp16_sz128_coralonly.csv', delimiter = ';', header = 0)
+metrics = pd.read_csv('comp16_sz64_coralonly.csv', delimiter = ';', header = 0)
+mod16_128 = pd.read_csv('comp16_sz128_coralonly.csv', delimiter = ';', header = 0)
+metrics = pd.read_csv('comp8_sz128_coralonly.csv', delimiter = ';', header = 0)
+#mod8_64 = pd.read_csv('comp8_sz64_coralonly.csv', delimiter = ';', header = 0)
+#mod4_128 = pd.read_csv('comp4_sz128_coralonly.csv', delimiter = ';', header = 0)
+#mod4_64 = pd.read_csv('comp4_sz64_coralonly.csv', delimiter = ';', header = 0)
+
+
 
 plt.figure(1)
 plt.subplot(1,3,1)

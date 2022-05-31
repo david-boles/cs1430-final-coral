@@ -13,26 +13,24 @@ import PIL
 DATA_SECTIONS = 4
 # Input shape will be (batch_sz, INPUT_DIM, INPUT_DIM, 3)
 # DON'T FORGET TO UPDATE THE MODEL IF YOU CHANGE THIS
-INPUT_DIM = 128
-# Shift in pixels (1 dimension) from one input region to the next
-TRAIN_EXAMPLE_STRIDE = ceil(INPUT_DIM / 1) # changed to 1
+INPUT_DIM = 64
 # Reduce the complexity of the model by increasing this number.
 # Power of 2 between 1 and 16 inclusive.
-COMPLEXITY_FACTOR = 16
+COMPLEXITY_FACTOR = 8
+# Choose number of epochs to run model for
+num_epochs = 25
 
 MODEL_NAME = f"comp{COMPLEXITY_FACTOR}_sz{INPUT_DIM}_coralonly"
 
 
 def load_dataset():
-    train_input = []
-    train_output = []
-    test_input = []
-    test_output = []
+    input = []
+    output = []
     for sidx in range(DATA_SECTIONS):
-        print (sidx)
         # Load
         section_input = img_as_float32(
-            io.imread(f"./data/segmented-elisa-section_{sidx+1}-input.png"))
+            io.imread(f"./data/segmented-elisa-section_{sidx+1}-input.png")
+        )
         section_output = img_as_float32(
             io.imread(f"./data/segmented-elisa-section_{sidx+1}-output.png")
         )
@@ -54,19 +52,32 @@ def load_dataset():
 
         # Split into examples. Training is taken from the first row.
         # Test set has no overlap, training set does.
-        for row in range(
-            INPUT_DIM, section_shape[0] - INPUT_DIM + 1, TRAIN_EXAMPLE_STRIDE
-        ):
-            for col in range(0, section_shape[1] - INPUT_DIM + 1, TRAIN_EXAMPLE_STRIDE):
-                train_input.append(
+        for row in range(0, section_shape[0] - INPUT_DIM + 1, INPUT_DIM):
+            for col in range(0, section_shape[1] - INPUT_DIM + 1, INPUT_DIM):
+                input.append(
                     section_input[row : row + INPUT_DIM, col : col + INPUT_DIM, :]
                 )
-                train_output.append(
+                output.append(
                     section_output[row : row + INPUT_DIM, col : col + INPUT_DIM]
                 )
-        for col in range(0, section_shape[1] - INPUT_DIM + 1, INPUT_DIM):
-            test_input.append(section_input[0:INPUT_DIM, col : col + INPUT_DIM, :])
-            test_output.append(section_output[0:INPUT_DIM, col : col + INPUT_DIM])
+
+    # create index to shuffle dataset
+    shuffle_ind = np.arange(len(input))
+    np.random.shuffle(shuffle_ind)
+
+    # shuffle input and output data
+    input = np.array(input)[shuffle_ind.astype(int)]
+    output = np.array(output)[shuffle_ind.astype(int)]
+
+    # separate input and output data into train/test sets
+    num_test = ceil(len(input) / 10)  # put 10% of data into test set
+    test_input = input[:num_test]
+    test_output = output[:num_test]
+    train_input = input[num_test:]
+    train_output = output[num_test:]
+    # for col in range(0, section_shape[1] - INPUT_DIM + 1, INPUT_DIM):
+    #     test_input.append(section_input[0:INPUT_DIM, col : col + INPUT_DIM, :])
+    #     test_output.append(section_output[0:INPUT_DIM, col : col + INPUT_DIM])
 
     return (np.stack(x) for x in (train_input, train_output, test_input, test_output))
 
@@ -132,7 +143,7 @@ def Segmenter():
         downsample(512 / COMPLEXITY_FACTOR, 4),
         downsample(512 / COMPLEXITY_FACTOR, 4),
         downsample(512 / COMPLEXITY_FACTOR, 4),
-        downsample(512 / COMPLEXITY_FACTOR, 4),  # Comment out for size 64
+        # downsample(512 / COMPLEXITY_FACTOR, 4),  # Comment out for size 64
         # (batch_size, 1, 1, 512 / COMPLEXITY_FACTOR)
     ]
 
@@ -140,7 +151,7 @@ def Segmenter():
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
         upsample(512 / COMPLEXITY_FACTOR, 4, apply_dropout=True),
-        upsample(512 / COMPLEXITY_FACTOR, 4),  # Comment out for size 64
+        # upsample(512 / COMPLEXITY_FACTOR, 4), # Comment out for size 64
         upsample(256 / COMPLEXITY_FACTOR, 4),
         upsample(128 / COMPLEXITY_FACTOR, 4),
     ]
@@ -177,12 +188,11 @@ def Segmenter():
     model.compile(
         optimizer="adam",
         loss=tf.keras.losses.BinaryCrossentropy(),
-        metrics=['accuracy',
-                tf.keras.metrics.Precision(),
-                tf.keras.metrics.Recall()]
+        metrics=["accuracy", tf.keras.metrics.Precision(), tf.keras.metrics.Recall()],
     )
 
     return model
+
 
 """
 def calc_metrics(model, testX, testY):
@@ -239,7 +249,6 @@ class DisplayCallback(tf.keras.callbacks.Callback):
         plt.title("Accuracies by Epoch")
         plt.legend(["Train", "Validation"])
 
-
     def on_batch_end(self, batch, logs=None):
         idx = randrange(len(self.input))
         pred_mask = model.predict(self.input[[idx]])[0]
@@ -255,7 +264,7 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             plt.imshow(image)
             plt.axis("off")
 
-        plt.savefig('plots/train_img_batch'+str(batch)+'.png')
+        plt.savefig("plots/train_img_batch" + str(batch) + ".png")
         plt.draw()
         plt.pause(0.01)
 
@@ -330,20 +339,19 @@ train_input, train_output, test_input, test_output = load_dataset()
 print(train_input.shape)
 
 # Create file to save metrics
-csv_logger = CSVLogger(MODEL_NAME+'.csv', append=True, separator=';')
+csv_logger = CSVLogger(MODEL_NAME + ".csv", append=True, separator=";")
 
 # Define the model
 model = Segmenter()
-num_epochs = 15
 
 # Train the model
 history = model.fit(
     train_input,
     train_output,
-    batch_size = 64,
+    batch_size=64,
     epochs=15,
     validation_data=(test_input, test_output),
-    callbacks=[DisplayCallback(model, test_input, test_output), csv_logger]
+    callbacks=[DisplayCallback(model, test_input, test_output), csv_logger],
 )
 
 # Plot the model's structure
@@ -365,7 +373,7 @@ history = model.fit(
 
 # serialize model to JSON
 model_json = model.to_json()
-with open(MODEL_NAME+".json", "w") as json_file:
+with open(MODEL_NAME + ".json", "w") as json_file:
     json_file.write(model_json)
 # serialize weights to HDF5
 model.save_weights(MODEL_NAME + ".h5")
